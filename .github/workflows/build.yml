@@ -86,7 +86,8 @@ jobs:
         run: make -C dspico-bootloader
 
       - name: DLDI-patch Bootloader
-        run: "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-bootloader/BOOTLOADER.nds
+        run: |
+          "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-bootloader/BOOTLOADER.nds
 
       # ────────────────────────────────────────────────────────────
       # 7. Build DSRomEncryptor & encrypt Bootloader  →  default.nds
@@ -125,7 +126,8 @@ jobs:
         run: make -C dspico-wrfuxxed
 
       - name: DLDI-patch Wrfuxxed
-        run: "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
+        run: |
+          "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
 
       # ────────────────────────────────────────────────────────────
       # 9. Build DSpico Firmware  →  DSpico.uf2
