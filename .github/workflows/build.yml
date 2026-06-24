@@ -1,0 +1,213 @@
+name: Build DSpico
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write  # needed to upload release assets
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ────────────────────────────────────────────────────────────
+      # 1. System packages
+      # ────────────────────────────────────────────────────────────
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-arm-none-eabi build-essential git
+
+      # ────────────────────────────────────────────────────────────
+      # 2. Wonderful Toolchain + BlocksDS
+      # ────────────────────────────────────────────────────────────
+      - name: Install Wonderful Toolchain
+        run: |
+          wget -q https://wonderful.asie.pl/bootstrap/wf-bootstrap-x86_64-linux.tar.gz
+          sudo tar -xzf wf-bootstrap-x86_64-linux.tar.gz -C /opt/wonderful
+          echo "/opt/wonderful/bin" >> $GITHUB_PATH
+
+      - name: Install BlocksDS via wf-pacman
+        run: |
+          wf-pacman --noconfirm -Syu wf-tools
+          wf-config repo enable blocksds
+          wf-pacman --noconfirm -Syu
+          wf-pacman --noconfirm -S blocksds-toolchain
+
+      - name: Set BlocksDS / dlditool environment variables
+        run: |
+          echo "BLOCKSDS=/opt/wonderful/thirdparty/blocksds/core" >> $GITHUB_ENV
+          echo "BLOCKSDSEXT=/opt/wonderful/thirdparty/blocksds/external" >> $GITHUB_ENV
+          echo "DLDITOOL=/opt/wonderful/thirdparty/blocksds/core/tools/dlditool/dlditool" >> $GITHUB_ENV
+
+      # ────────────────────────────────────────────────────────────
+      # 3. .NET 9.0 (for DSRomEncryptor)
+      # ────────────────────────────────────────────────────────────
+      - name: Set up .NET 9.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      # ────────────────────────────────────────────────────────────
+      # 4. Build DSpico DLDI  →  DSpico.dldi
+      # ────────────────────────────────────────────────────────────
+      - name: Build DSpico DLDI
+        run: |
+          git clone https://github.com/LNH-team/dspico-dldi
+          cd dspico-dldi
+          make
+
+      # ────────────────────────────────────────────────────────────
+      # 5. Build Bootloader  →  BOOTLOADER.nds  (DLDI-patched)
+      # ────────────────────────────────────────────────────────────
+      - name: Build DSpico Bootloader
+        run: |
+          git clone https://github.com/LNH-team/dspico-bootloader
+          cd dspico-bootloader
+          git submodule update --init
+          make
+
+      - name: DLDI-patch Bootloader
+        run: |
+          "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-bootloader/BOOTLOADER.nds
+
+      # ────────────────────────────────────────────────────────────
+      # 6. Build DSRomEncryptor & encrypt Bootloader  →  default.nds
+      #
+      #    Prerequisites (base64-encoded, stored as repo secrets):
+      #      NTR_BLOWFISH_B64  –  ntrBlowfish.bin
+      #                           (SHA1: 84E467F2485078E401A17A5F231E3FE6E9686648)
+      #                           or biosnds7.rom
+      #      TWL_BLOWFISH_B64  –  twlBlowfish.bin
+      #                           (SHA1: 2DEA11191F28C6CC1956DADB8941AFFD4B2B5102)
+      #                           or biosdsi7.rom
+      #
+      #    Encode locally:
+      #      base64 -i ntrBlowfish.bin | pbcopy   # macOS — paste as NTR_BLOWFISH_B64 secret
+      #      base64 -i twlBlowfish.bin | pbcopy   # macOS — paste as TWL_BLOWFISH_B64 secret
+      # ────────────────────────────────────────────────────────────
+      - name: Build DSRomEncryptor
+        run: |
+          git clone https://github.com/Gericom/DSRomEncryptor
+          cd DSRomEncryptor
+          dotnet build --configuration Debug
+
+      - name: Decode blowfish tables
+        env:
+          NTR_BLOWFISH_B64: ${{ secrets.NTR_BLOWFISH_B64 }}
+          TWL_BLOWFISH_B64: ${{ secrets.TWL_BLOWFISH_B64 }}
+        run: |
+          ENCDIR="DSRomEncryptor/DSRomEncryptor/bin/Debug/net9.0"
+          echo "$NTR_BLOWFISH_B64" | base64 -d > "$ENCDIR/ntrBlowfish.bin"
+          echo "$TWL_BLOWFISH_B64" | base64 -d > "$ENCDIR/twlBlowfish.bin"
+
+      - name: Encrypt Bootloader → default.nds
+        run: |
+          ENCDIR="DSRomEncryptor/DSRomEncryptor/bin/Debug/net9.0"
+          dotnet "$ENCDIR/DSRomEncryptor.dll" \
+            dspico-bootloader/BOOTLOADER.nds \
+            default.nds
+
+      # ────────────────────────────────────────────────────────────
+      # 7. (Optional) Build Wrfuxxed  →  uartBufv060.bin (DLDI-patched)
+      # ────────────────────────────────────────────────────────────
+      - name: Build Wrfuxxed
+        run: |
+          git clone https://github.com/LNH-team/dspico-wrfuxxed
+          cd dspico-wrfuxxed
+          make
+
+      - name: DLDI-patch Wrfuxxed
+        run: |
+          "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
+
+      # ────────────────────────────────────────────────────────────
+      # 8. Build DSpico Firmware  →  DSpico.uf2
+      # ────────────────────────────────────────────────────────────
+      - name: Clone DSpico Firmware
+        run: |
+          git clone https://github.com/LNH-team/dspico-firmware
+          cd dspico-firmware
+          git submodule update --init
+          cd pico-sdk
+          git submodule update --init
+          cd ..
+
+      - name: Prepare firmware ROM assets
+        run: |
+          # Required: copy default.nds
+          cp default.nds dspico-firmware/roms/default.nds
+
+          # Optional Wrfuxxed support:
+          # Uncomment the three lines below and add a WRFU_TESTER_B64 secret
+          # (WRFU Tester v0.60 – SHA1: 2d65fb7a0c62a4f08954b98c95f42b804fccfd26)
+          # echo "${{ secrets.WRFU_TESTER_B64 }}" | base64 -d > dspico-firmware/roms/dsimode.nds
+          # cp dspico-wrfuxxed/uartBufv060.bin dspico-firmware/data/uartBufv060.bin
+          # sed -i 's/#\s*set(DSPICO_ENABLE_WRFUXXED/set(DSPICO_ENABLE_WRFUXXED/' dspico-firmware/CMakeLists.txt
+
+      - name: Compile DSpico Firmware
+        run: |
+          cd dspico-firmware
+          chmod +x compile.sh
+          ./compile.sh
+
+      # ────────────────────────────────────────────────────────────
+      # 9. Build Pico Loader
+      #    →  picoLoader7.bin, picoLoader9_DSPICO.bin,
+      #       data/aplist.bin, data/savelist.bin
+      # ────────────────────────────────────────────────────────────
+      - name: Build Pico Loader
+        run: |
+          git clone https://github.com/LNH-team/pico-loader
+          cd pico-loader
+          git submodule update --init
+          make
+
+      # ────────────────────────────────────────────────────────────
+      # 10. Build Pico Launcher  →  LAUNCHER.nds
+      # ────────────────────────────────────────────────────────────
+      - name: Build Pico Launcher
+        run: |
+          git clone https://github.com/LNH-team/pico-launcher
+          cd pico-launcher
+          git submodule update --init
+          make
+
+      # ────────────────────────────────────────────────────────────
+      # 11. Collect all artifacts
+      # ────────────────────────────────────────────────────────────
+      - name: Collect release artifacts
+        run: |
+          mkdir -p dist/_pico/data
+
+          cp dspico-dldi/DSpico.dldi              dist/DSpico.dldi
+          cp default.nds                           dist/default.nds
+          cp dspico-firmware/build/DSpico.uf2      dist/DSpico.uf2
+          cp pico-launcher/LAUNCHER.nds            dist/LAUNCHER.nds
+          cp dspico-wrfuxxed/uartBufv060.bin       dist/uartBufv060.bin
+          cp pico-loader/picoLoader7.bin           dist/picoLoader7.bin
+          cp pico-loader/picoLoader9_DSPICO.bin    dist/picoLoader9_DSPICO.bin
+          cp pico-loader/data/aplist.bin           dist/_pico/data/aplist.bin
+          cp pico-loader/data/savelist.bin         dist/_pico/data/savelist.bin
+
+          echo "=== Release artifacts ==="
+          find dist -type f | sort
+
+      # ────────────────────────────────────────────────────────────
+      # 12. Upload artifacts to the GitHub Release
+      # ────────────────────────────────────────────────────────────
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/DSpico.dldi
+            dist/default.nds
+            dist/DSpico.uf2
+            dist/LAUNCHER.nds
+            dist/uartBufv060.bin
+            dist/picoLoader7.bin
+            dist/picoLoader9_DSPICO.bin
+            dist/_pico/data/aplist.bin
+            dist/_pico/data/savelist.bin
