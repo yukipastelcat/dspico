@@ -42,14 +42,23 @@ jobs:
           git -C dspico-firmware/pico-sdk submodule update --init
 
       # ────────────────────────────────────────────────────────────
-      # 2. Pull BlocksDS Docker image
-      #    Used for all DS toolchain builds (DLDI, bootloader, etc.)
+      # 2. Extract BlocksDS toolchain from Docker image onto the host
+      #    This avoids the Wonderful Toolchain installer and makes
+      #    BlocksDS available alongside .NET on the same runner.
       # ────────────────────────────────────────────────────────────
-      - name: Pull BlocksDS Docker image
-        run: docker image pull skylyrac/blocksds:slim-latest
+      - name: Install BlocksDS (via Docker image extraction)
+        run: |
+          docker image pull skylyrac/blocksds:slim-latest
+          docker create --name blocksds-extract skylyrac/blocksds:slim-latest
+          sudo docker cp blocksds-extract:/opt/wonderful /opt/wonderful
+          docker rm blocksds-extract
+          echo "/opt/wonderful/bin" >> $GITHUB_PATH
+          echo "BLOCKSDS=/opt/wonderful/thirdparty/blocksds/core" >> $GITHUB_ENV
+          echo "BLOCKSDSEXT=/opt/wonderful/thirdparty/blocksds/external" >> $GITHUB_ENV
+          echo "DLDITOOL=/opt/wonderful/thirdparty/blocksds/core/tools/dlditool/dlditool" >> $GITHUB_ENV
 
       # ────────────────────────────────────────────────────────────
-      # 3. System packages (for firmware / DSRomEncryptor builds)
+      # 3. System packages (for firmware build)
       # ────────────────────────────────────────────────────────────
       - name: Install system packages
         run: |
@@ -68,24 +77,16 @@ jobs:
       # 5. Build DSpico DLDI  →  DSpico.dldi
       # ────────────────────────────────────────────────────────────
       - name: Build DSpico DLDI
-        run: |
-          docker run --rm -v "$PWD":/work -w /work/dspico-dldi \
-            skylyrac/blocksds:slim-latest make
+        run: make -C dspico-dldi
 
       # ────────────────────────────────────────────────────────────
       # 6. Build Bootloader  →  BOOTLOADER.nds  (DLDI-patched)
       # ────────────────────────────────────────────────────────────
       - name: Build DSpico Bootloader
-        run: |
-          docker run --rm -v "$PWD":/work -w /work/dspico-bootloader \
-            skylyrac/blocksds:slim-latest make
+        run: make -C dspico-bootloader
 
       - name: DLDI-patch Bootloader
-        run: |
-          docker run --rm -v "$PWD":/work -w /work \
-            skylyrac/blocksds:slim-latest \
-            /opt/wonderful/thirdparty/blocksds/core/tools/dlditool/dlditool \
-              dspico-dldi/DSpico.dldi dspico-bootloader/BOOTLOADER.nds
+        run: "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-bootloader/BOOTLOADER.nds
 
       # ────────────────────────────────────────────────────────────
       # 7. Build DSRomEncryptor & encrypt Bootloader  →  default.nds
@@ -121,16 +122,10 @@ jobs:
       # 8. (Optional) Build Wrfuxxed  →  uartBufv060.bin (DLDI-patched)
       # ────────────────────────────────────────────────────────────
       - name: Build Wrfuxxed
-        run: |
-          docker run --rm -v "$PWD":/work -w /work/dspico-wrfuxxed \
-            skylyrac/blocksds:slim-latest make
+        run: make -C dspico-wrfuxxed
 
       - name: DLDI-patch Wrfuxxed
-        run: |
-          docker run --rm -v "$PWD":/work -w /work \
-            skylyrac/blocksds:slim-latest \
-            /opt/wonderful/thirdparty/blocksds/core/tools/dlditool/dlditool \
-              dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
+        run: "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
 
       # ────────────────────────────────────────────────────────────
       # 9. Build DSpico Firmware  →  DSpico.uf2
@@ -158,17 +153,13 @@ jobs:
       #        data/aplist.bin, data/savelist.bin
       # ────────────────────────────────────────────────────────────
       - name: Build Pico Loader
-        run: |
-          docker run --rm -v "$PWD":/work -w /work/pico-loader \
-            skylyrac/blocksds:slim-latest make
+        run: make -C pico-loader
 
       # ────────────────────────────────────────────────────────────
       # 11. Build Pico Launcher  →  LAUNCHER.nds
       # ────────────────────────────────────────────────────────────
       - name: Build Pico Launcher
-        run: |
-          docker run --rm -v "$PWD":/work -w /work/pico-launcher \
-            skylyrac/blocksds:slim-latest make
+        run: make -C pico-launcher
 
       # ────────────────────────────────────────────────────────────
       # 12. Collect all artifacts
