@@ -164,21 +164,25 @@ jobs:
         run: make -C pico-launcher
 
       # ────────────────────────────────────────────────────────────
-      # 12. Collect all artifacts
+      # 12. Collect artifacts + build SD card zip
       # ────────────────────────────────────────────────────────────
       - name: Collect release artifacts
         run: |
-          mkdir -p dist/_pico/data
+          # Individual files
+          mkdir -p dist
+          cp dspico-firmware/build/DSpico.uf2  dist/DSpico.uf2
+          cp dspico-wrfuxxed/uartBufv060.bin   dist/uartBufv060.bin
 
-          cp dspico-dldi/DSpico.dldi              dist/DSpico.dldi
-          cp default.nds                           dist/default.nds
-          cp dspico-firmware/build/DSpico.uf2      dist/DSpico.uf2
-          cp pico-launcher/LAUNCHER.nds            dist/LAUNCHER.nds
-          cp dspico-wrfuxxed/uartBufv060.bin       dist/uartBufv060.bin
-          cp pico-loader/picoLoader7.bin           dist/picoLoader7.bin
-          cp pico-loader/picoLoader9_DSPICO.bin    dist/picoLoader9_DSPICO.bin
-          cp pico-loader/data/aplist.bin           dist/_pico/data/aplist.bin
-          cp pico-loader/data/savelist.bin         dist/_pico/data/savelist.bin
+          # SD card layout
+          mkdir -p sd/_pico
+          cp pico-launcher/LAUNCHER.nds              sd/_picoboot.nds
+          cp pico-loader/picoLoader7.bin             sd/_pico/picoLoader7.bin
+          cp pico-loader/picoLoader9_DSPICO.bin      sd/_pico/picoLoader9.bin
+          cp pico-loader/data/aplist.bin             sd/_pico/aplist.bin
+          cp pico-loader/data/savelist.bin           sd/_pico/savelist.bin
+          cp -r pico-launcher/_pico/themes           sd/_pico/themes
+
+          cd sd && zip -r ../dist/sd-card.zip . && cd ..
 
           echo "=== Release artifacts ==="
           find dist -type f | sort
@@ -190,12 +194,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/DSpico.dldi
-            dist/default.nds
+            dist/sd-card.zip
             dist/DSpico.uf2
-            dist/LAUNCHER.nds
             dist/uartBufv060.bin
-            dist/picoLoader7.bin
-            dist/picoLoader9_DSPICO.bin
             dist/_pico/data/aplist.bin
             dist/_pico/data/savelist.bin
