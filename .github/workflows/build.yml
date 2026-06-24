@@ -13,7 +13,36 @@ jobs:
 
     steps:
       # ────────────────────────────────────────────────────────────
-      # 1. System packages
+      # 1. Checkout repo + init top-level submodules
+      #    Nested submodules (bootloader, firmware's pico-sdk, etc.)
+      #    are handled explicitly below to match the guide's instructions.
+      # ────────────────────────────────────────────────────────────
+      - uses: actions/checkout@v4
+        with:
+          submodules: false  # we init manually for precise control
+
+      - name: Initialize submodules
+        run: |
+          git submodule update --init dspico-dldi
+          git submodule update --init dspico-bootloader
+          git submodule update --init DSRomEncryptor
+          git submodule update --init dspico-wrfuxxed
+          git submodule update --init dspico-firmware
+          git submodule update --init pico-loader
+          git submodule update --init pico-launcher
+
+          # Nested submodules
+          git -C dspico-bootloader submodule update --init
+          git -C pico-loader       submodule update --init
+          git -C pico-launcher     submodule update --init
+
+          # dspico-firmware: init pico-sdk, then pico-sdk's own submodules
+          # (don't use --recursive — pulls in unnecessary pico-sdk extras)
+          git -C dspico-firmware submodule update --init
+          git -C dspico-firmware/pico-sdk submodule update --init
+
+      # ────────────────────────────────────────────────────────────
+      # 2. System packages
       # ────────────────────────────────────────────────────────────
       - name: Install system packages
         run: |
@@ -21,7 +50,7 @@ jobs:
           sudo apt-get install -y cmake gcc-arm-none-eabi build-essential git
 
       # ────────────────────────────────────────────────────────────
-      # 2. Wonderful Toolchain + BlocksDS
+      # 3. Wonderful Toolchain + BlocksDS
       # ────────────────────────────────────────────────────────────
       - name: Install Wonderful Toolchain
         run: |
@@ -43,7 +72,7 @@ jobs:
           echo "DLDITOOL=/opt/wonderful/thirdparty/blocksds/core/tools/dlditool/dlditool" >> $GITHUB_ENV
 
       # ────────────────────────────────────────────────────────────
-      # 3. .NET 9.0 (for DSRomEncryptor)
+      # 4. .NET 9.0 (for DSRomEncryptor)
       # ────────────────────────────────────────────────────────────
       - name: Set up .NET 9.0
         uses: actions/setup-dotnet@v4
@@ -51,48 +80,34 @@ jobs:
           dotnet-version: "9.0.x"
 
       # ────────────────────────────────────────────────────────────
-      # 4. Build DSpico DLDI  →  DSpico.dldi
+      # 5. Build DSpico DLDI  →  DSpico.dldi
       # ────────────────────────────────────────────────────────────
       - name: Build DSpico DLDI
-        run: |
-          git clone https://github.com/LNH-team/dspico-dldi
-          cd dspico-dldi
-          make
+        run: make -C dspico-dldi
 
       # ────────────────────────────────────────────────────────────
-      # 5. Build Bootloader  →  BOOTLOADER.nds  (DLDI-patched)
+      # 6. Build Bootloader  →  BOOTLOADER.nds  (DLDI-patched)
       # ────────────────────────────────────────────────────────────
       - name: Build DSpico Bootloader
-        run: |
-          git clone https://github.com/LNH-team/dspico-bootloader
-          cd dspico-bootloader
-          git submodule update --init
-          make
+        run: make -C dspico-bootloader
 
       - name: DLDI-patch Bootloader
         run: |
           "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-bootloader/BOOTLOADER.nds
 
       # ────────────────────────────────────────────────────────────
-      # 6. Build DSRomEncryptor & encrypt Bootloader  →  default.nds
+      # 7. Build DSRomEncryptor & encrypt Bootloader  →  default.nds
       #
       #    Prerequisites (base64-encoded, stored as repo secrets):
-      #      NTR_BLOWFISH_B64  –  ntrBlowfish.bin
-      #                           (SHA1: 84E467F2485078E401A17A5F231E3FE6E9686648)
-      #                           or biosnds7.rom
-      #      TWL_BLOWFISH_B64  –  twlBlowfish.bin
-      #                           (SHA1: 2DEA11191F28C6CC1956DADB8941AFFD4B2B5102)
-      #                           or biosdsi7.rom
+      #      NTR_BLOWFISH_B64  –  biosnds7.rom  (DS ARM7 BIOS dump)
+      #      TWL_BLOWFISH_B64  –  biosdsi7.rom  (DSi ARM7i BIOS dump)
       #
-      #    Encode locally:
-      #      base64 -i ntrBlowfish.bin | pbcopy   # macOS — paste as NTR_BLOWFISH_B64 secret
-      #      base64 -i twlBlowfish.bin | pbcopy   # macOS — paste as TWL_BLOWFISH_B64 secret
+      #    Encode locally (macOS):
+      #      base64 -i biosnds7.rom | pbcopy   # paste as NTR_BLOWFISH_B64 secret
+      #      base64 -i biosdsi7.rom | pbcopy   # paste as TWL_BLOWFISH_B64 secret
       # ────────────────────────────────────────────────────────────
       - name: Build DSRomEncryptor
-        run: |
-          git clone https://github.com/Gericom/DSRomEncryptor
-          cd DSRomEncryptor
-          dotnet build --configuration Debug
+        run: dotnet build --configuration Debug DSRomEncryptor/DSRomEncryptor.sln
 
       - name: Decode blowfish tables
         env:
@@ -100,8 +115,8 @@ jobs:
           TWL_BLOWFISH_B64: ${{ secrets.TWL_BLOWFISH_B64 }}
         run: |
           ENCDIR="DSRomEncryptor/DSRomEncryptor/bin/Debug/net9.0"
-          echo "$NTR_BLOWFISH_B64" | base64 -d > "$ENCDIR/ntrBlowfish.bin"
-          echo "$TWL_BLOWFISH_B64" | base64 -d > "$ENCDIR/twlBlowfish.bin"
+          echo "$NTR_BLOWFISH_B64" | base64 -d > "$ENCDIR/biosnds7.rom"
+          echo "$TWL_BLOWFISH_B64" | base64 -d > "$ENCDIR/biosdsi7.rom"
 
       - name: Encrypt Bootloader → default.nds
         run: |
@@ -111,33 +126,20 @@ jobs:
             default.nds
 
       # ────────────────────────────────────────────────────────────
-      # 7. (Optional) Build Wrfuxxed  →  uartBufv060.bin (DLDI-patched)
+      # 8. (Optional) Build Wrfuxxed  →  uartBufv060.bin (DLDI-patched)
       # ────────────────────────────────────────────────────────────
       - name: Build Wrfuxxed
-        run: |
-          git clone https://github.com/LNH-team/dspico-wrfuxxed
-          cd dspico-wrfuxxed
-          make
+        run: make -C dspico-wrfuxxed
 
       - name: DLDI-patch Wrfuxxed
         run: |
           "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
 
       # ────────────────────────────────────────────────────────────
-      # 8. Build DSpico Firmware  →  DSpico.uf2
+      # 9. Build DSpico Firmware  →  DSpico.uf2
       # ────────────────────────────────────────────────────────────
-      - name: Clone DSpico Firmware
-        run: |
-          git clone https://github.com/LNH-team/dspico-firmware
-          cd dspico-firmware
-          git submodule update --init
-          cd pico-sdk
-          git submodule update --init
-          cd ..
-
       - name: Prepare firmware ROM assets
         run: |
-          # Required: copy default.nds
           cp default.nds dspico-firmware/roms/default.nds
 
           # Optional Wrfuxxed support:
@@ -154,29 +156,21 @@ jobs:
           ./compile.sh
 
       # ────────────────────────────────────────────────────────────
-      # 9. Build Pico Loader
-      #    →  picoLoader7.bin, picoLoader9_DSPICO.bin,
-      #       data/aplist.bin, data/savelist.bin
+      # 10. Build Pico Loader
+      #     →  picoLoader7.bin, picoLoader9_DSPICO.bin,
+      #        data/aplist.bin, data/savelist.bin
       # ────────────────────────────────────────────────────────────
       - name: Build Pico Loader
-        run: |
-          git clone https://github.com/LNH-team/pico-loader
-          cd pico-loader
-          git submodule update --init
-          make
+        run: make -C pico-loader
 
       # ────────────────────────────────────────────────────────────
-      # 10. Build Pico Launcher  →  LAUNCHER.nds
+      # 11. Build Pico Launcher  →  LAUNCHER.nds
       # ────────────────────────────────────────────────────────────
       - name: Build Pico Launcher
-        run: |
-          git clone https://github.com/LNH-team/pico-launcher
-          cd pico-launcher
-          git submodule update --init
-          make
+        run: make -C pico-launcher
 
       # ────────────────────────────────────────────────────────────
-      # 11. Collect all artifacts
+      # 12. Collect all artifacts
       # ────────────────────────────────────────────────────────────
       - name: Collect release artifacts
         run: |
@@ -196,7 +190,7 @@ jobs:
           find dist -type f | sort
 
       # ────────────────────────────────────────────────────────────
-      # 12. Upload artifacts to the GitHub Release
+      # 13. Upload artifacts to the GitHub Release
       # ────────────────────────────────────────────────────────────
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
