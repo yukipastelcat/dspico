@@ -1,7 +1,6 @@
 # dspico
 
-GitHub Actions workflow that automatically builds all DSpico release artifacts
-when a new GitHub Release is published.
+GitHub Actions workflow that automatically builds all DSpico release artifacts when a new GitHub Release is published.
 
 ## Artifacts produced
 
@@ -30,8 +29,8 @@ Before publishing a release, add these two secrets to the repository
 Encode a file on macOS:
 
 ```bash
-base64 -i ntrBlowfish.bin | pbcopy   # copies to clipboard, paste as NTR_BLOWFISH_B64
-base64 -i twlBlowfish.bin | pbcopy   # copies to clipboard, paste as TWL_BLOWFISH_B64
+gzip -c ntrBlowfish.bin | base64 -i - | pbcopy   # copies to clipboard, paste as NTR_BLOWFISH_B64
+gzip -c twlBlowfish.bin | base64 -i - | pbcopy   # copies to clipboard, paste as TWL_BLOWFISH_B64
 ```
 
 These are proprietary Nintendo files and cannot be included in the repository.
@@ -49,14 +48,4 @@ To include the Wrfuxxed exploit for unmodified DSi/3DS systems, edit the
 ## Triggering a build
 
 [Publish a GitHub Release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
-The workflow triggers on `release: published` and uploads all 9 artifacts directly to that release.
-
-## Push to GitHub
-
-```bash
-git add .
-git commit -m "Initial commit: GitHub Actions workflow to build DSpico on release"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/dspico.git
-git push -u origin main
-```
+The workflow triggers on `release: published` and uploads all artifacts directly to that release.

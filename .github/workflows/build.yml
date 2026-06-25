@@ -5,21 +5,16 @@ on:
     types: [published]
 
 permissions:
-  contents: write  # needed to upload release assets
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-      # ────────────────────────────────────────────────────────────
-      # 1. Checkout repo + init top-level submodules
-      #    Nested submodules (bootloader, firmware's pico-sdk, etc.)
-      #    are handled explicitly below to match the guide's instructions.
-      # ────────────────────────────────────────────────────────────
       - uses: actions/checkout@v4
         with:
-          submodules: false  # we init manually for precise control
+          submodules: false
 
       - name: Initialize submodules
         run: |
@@ -31,21 +26,13 @@ jobs:
           git submodule update --init pico-loader
           git submodule update --init pico-launcher
 
-          # Nested submodules
           git -C dspico-bootloader submodule update --init
           git -C pico-loader       submodule update --init
           git -C pico-launcher     submodule update --init
 
-          # dspico-firmware: init pico-sdk, then pico-sdk's own submodules
-          # (don't use --recursive — pulls in unnecessary pico-sdk extras)
           git -C dspico-firmware submodule update --init
           git -C dspico-firmware/pico-sdk submodule update --init
 
-      # ────────────────────────────────────────────────────────────
-      # 2. Extract BlocksDS toolchain from Docker image onto the host
-      #    This avoids the Wonderful Toolchain installer and makes
-      #    BlocksDS available alongside .NET on the same runner.
-      # ────────────────────────────────────────────────────────────
       - name: Install BlocksDS (via Docker image extraction)
         run: |
           docker image pull skylyrac/blocksds:slim-latest
@@ -57,31 +44,19 @@ jobs:
           echo "BLOCKSDSEXT=/opt/wonderful/thirdparty/blocksds/external" >> $GITHUB_ENV
           echo "DLDITOOL=/opt/wonderful/thirdparty/blocksds/core/tools/dlditool/dlditool" >> $GITHUB_ENV
 
-      # ────────────────────────────────────────────────────────────
-      # 3. System packages (for firmware build)
-      # ────────────────────────────────────────────────────────────
       - name: Install system packages
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake gcc-arm-none-eabi build-essential git
 
-      # ────────────────────────────────────────────────────────────
-      # 4. .NET 9.0 (for DSRomEncryptor)
-      # ────────────────────────────────────────────────────────────
       - name: Set up .NET 9.0
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
 
-      # ────────────────────────────────────────────────────────────
-      # 5. Build DSpico DLDI  →  DSpico.dldi
-      # ────────────────────────────────────────────────────────────
       - name: Build DSpico DLDI
         run: make -C dspico-dldi
 
-      # ────────────────────────────────────────────────────────────
-      # 6. Build Bootloader  →  BOOTLOADER.nds  (DLDI-patched)
-      # ────────────────────────────────────────────────────────────
       - name: Build DSpico Bootloader
         run: make -C dspico-bootloader
 
@@ -89,17 +64,6 @@ jobs:
         run: |
           "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-bootloader/BOOTLOADER.nds
 
-      # ────────────────────────────────────────────────────────────
-      # 7. Build DSRomEncryptor & encrypt Bootloader  →  default.nds
-      #
-      #    Prerequisites (base64+gzip-encoded, stored as repo secrets):
-      #      NTR_BLOWFISH_B64  –  biosnds7.rom  (DS ARM7 BIOS dump)
-      #      TWL_BLOWFISH_B64  –  biosdsi7.rom  (DSi ARM7i BIOS dump)
-      #
-      #    Encode locally (macOS):
-      #      gzip -c bios7.bin  | base64 -i - | pbcopy   # paste as NTR_BLOWFISH_B64 secret
-      #      gzip -c bios7i.bin | base64 -i - | pbcopy   # paste as TWL_BLOWFISH_B64 secret
-      # ────────────────────────────────────────────────────────────
       - name: Build DSRomEncryptor
         run: dotnet build --configuration Debug DSRomEncryptor/DSRomEncryptor.sln
 
@@ -119,29 +83,26 @@ jobs:
             dspico-bootloader/BOOTLOADER.nds \
             default.nds
 
-      # ────────────────────────────────────────────────────────────
-      # 8. (Optional) Build Wrfuxxed  →  uartBufv060.bin (DLDI-patched)
-      # ────────────────────────────────────────────────────────────
       - name: Build Wrfuxxed
+        if: ${{ secrets.WRFU_TESTER_B64 != '' }}
         run: make -C dspico-wrfuxxed
 
       - name: DLDI-patch Wrfuxxed
+        if: ${{ secrets.WRFU_TESTER_B64 != '' }}
         run: |
           "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
 
-      # ────────────────────────────────────────────────────────────
-      # 9. Build DSpico Firmware  →  DSpico.uf2
-      # ────────────────────────────────────────────────────────────
       - name: Prepare firmware ROM assets
+        env:
+          WRFU_TESTER_B64: ${{ secrets.WRFU_TESTER_B64 }}
         run: |
           cp default.nds dspico-firmware/roms/default.nds
 
-          # Optional Wrfuxxed support:
-          # Uncomment the three lines below and add a WRFU_TESTER_B64 secret
-          # (WRFU Tester v0.60 – SHA1: 2d65fb7a0c62a4f08954b98c95f42b804fccfd26)
-          # echo "${{ secrets.WRFU_TESTER_B64 }}" | base64 -d > dspico-firmware/roms/dsimode.nds
-          # cp dspico-wrfuxxed/uartBufv060.bin dspico-firmware/data/uartBufv060.bin
-          # sed -i 's/#\s*set(DSPICO_ENABLE_WRFUXXED/set(DSPICO_ENABLE_WRFUXXED/' dspico-firmware/CMakeLists.txt
+          if [ -n "$WRFU_TESTER_B64" ]; then
+            echo "$WRFU_TESTER_B64" | base64 -d > dspico-firmware/roms/dsimode.nds
+            cp dspico-wrfuxxed/uartBufv060.bin dspico-firmware/data/uartBufv060.bin
+            sed -i 's/#\s*set(DSPICO_ENABLE_WRFUXXED/set(DSPICO_ENABLE_WRFUXXED/' dspico-firmware/CMakeLists.txt
+          fi
 
       - name: Compile DSpico Firmware
         run: |
@@ -149,31 +110,20 @@ jobs:
           chmod +x compile.sh
           ./compile.sh
 
-      # ────────────────────────────────────────────────────────────
-      # 10. Build Pico Loader
-      #     →  picoLoader7.bin, picoLoader9_DSPICO.bin,
-      #        data/aplist.bin, data/savelist.bin
-      # ────────────────────────────────────────────────────────────
       - name: Build Pico Loader
         run: make -C pico-loader
 
-      # ────────────────────────────────────────────────────────────
-      # 11. Build Pico Launcher  →  LAUNCHER.nds
-      # ────────────────────────────────────────────────────────────
       - name: Build Pico Launcher
         run: make -C pico-launcher
 
-      # ────────────────────────────────────────────────────────────
-      # 12. Collect artifacts + build SD card zip
-      # ────────────────────────────────────────────────────────────
       - name: Collect release artifacts
         run: |
-          # Individual files
           mkdir -p dist
           cp dspico-firmware/build/DSpico.uf2  dist/DSpico.uf2
-          cp dspico-wrfuxxed/uartBufv060.bin   dist/uartBufv060.bin
+          if [ -f dspico-wrfuxxed/uartBufv060.bin ]; then
+            cp dspico-wrfuxxed/uartBufv060.bin dist/uartBufv060.bin
+          fi
 
-          # SD card layout
           mkdir -p sd/_pico
           cp pico-launcher/LAUNCHER.nds              sd/_picoboot.nds
           cp pico-loader/picoLoader7.bin             sd/_pico/picoLoader7.bin
@@ -187,15 +137,17 @@ jobs:
           echo "=== Release artifacts ==="
           find dist -type f | sort
 
-      # ────────────────────────────────────────────────────────────
-      # 13. Upload artifacts to the GitHub Release
-      # ────────────────────────────────────────────────────────────
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/sd-card.zip
             dist/DSpico.uf2
-            dist/uartBufv060.bin
             dist/_pico/data/aplist.bin
             dist/_pico/data/savelist.bin
+
+      - name: Upload Wrfuxxed artifact
+        if: ${{ secrets.WRFU_TESTER_B64 != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/uartBufv060.bin
