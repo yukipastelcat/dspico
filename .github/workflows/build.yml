@@ -10,6 +10,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      WRFU_TESTER_B64: ${{ secrets.WRFU_TESTER_B64 }}
 
     steps:
       - uses: actions/checkout@v4
@@ -84,17 +86,15 @@ jobs:
             default.nds
 
       - name: Build Wrfuxxed
-        if: ${{ secrets.WRFU_TESTER_B64 != '' }}
+        if: ${{ env.WRFU_TESTER_B64 != '' }}
         run: make -C dspico-wrfuxxed
 
       - name: DLDI-patch Wrfuxxed
-        if: ${{ secrets.WRFU_TESTER_B64 != '' }}
+        if: ${{ env.WRFU_TESTER_B64 != '' }}
         run: |
           "$DLDITOOL" dspico-dldi/DSpico.dldi dspico-wrfuxxed/uartBufv060.bin
 
       - name: Prepare firmware ROM assets
-        env:
-          WRFU_TESTER_B64: ${{ secrets.WRFU_TESTER_B64 }}
         run: |
           cp default.nds dspico-firmware/roms/default.nds
 
@@ -143,11 +143,9 @@ jobs:
           files: |
             dist/sd-card.zip
             dist/DSpico.uf2
-            dist/_pico/data/aplist.bin
-            dist/_pico/data/savelist.bin
 
       - name: Upload Wrfuxxed artifact
-        if: ${{ secrets.WRFU_TESTER_B64 != '' }}
+        if: ${{ env.WRFU_TESTER_B64 != '' }}
         uses: softprops/action-gh-release@v2
         with:
           files: dist/uartBufv060.bin
